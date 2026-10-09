@@ -1,9 +1,7 @@
 
 name: Build Android APK
 
-on:
-  push:
-  workflow_dispatch:
+on: [push, workflow_dispatch]
 
 jobs:
   build:
@@ -13,13 +11,15 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Build With Buildozer Tool
+      - name: Build APK
+        id: buildozer
         uses: ArtemSBulgakov/buildozer-action@v1
         with:
-          command: buildozer -v android debug
+          workdir: .
+          buildozer_version: stable
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: android-apk
-          path: bin/*.apk
+          path: ${{ steps.buildozer.outputs.filename }}
