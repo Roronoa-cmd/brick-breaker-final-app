@@ -19,10 +19,16 @@ jobs:
         with:
           python-version: '3.10'
 
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential ccache git zip unzip openjdk-17-jdk \
+          sudo apt-get install -y build-essential ccache git zip unzip \
             autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev \
             libtinfo5 cmake libffi-dev libssl-dev
 
@@ -37,7 +43,7 @@ jobs:
 
       - name: Show end of log on failure
         if: failure()
-        run: grep -n -B 5 -A 25 "Command failed" build.log | tail -n 80
+        run: grep -n -B 40 "gradlew failed" build.log | head -n 100
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
