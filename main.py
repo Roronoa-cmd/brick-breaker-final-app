@@ -60,6 +60,7 @@ class BrickBreakerGame(Widget):
         self.key_left = False
         self.key_right = False
         self._tex_cache = {}
+        self._buttons = []
         self.make_bricks()
 
         # Keyboard only on desktop. On Android this would pop up the soft keyboard.
@@ -72,6 +73,7 @@ class BrickBreakerGame(Widget):
 
         Clock.schedule_interval(self.update, 1.0 / 60.0)
         self.bind(size=self._on_size, pos=self._on_size)
+        Window.bind(on_keyboard=self._on_window_key)
 
     # ---------- keyboard (desktop only) ----------
     def _keyboard_closed(self):
@@ -99,6 +101,20 @@ class BrickBreakerGame(Widget):
         elif keycode[1] in ['right', 'd']:
             self.key_right = False
         return True
+
+    def _on_window_key(self, window, key, *args):
+        # Android back button (and Esc on desktop)
+        if key == 27:
+            if self.state == "playing":
+                self.state = "paused"
+                return True
+            if self.state == "powerups":
+                self.state = "paused"
+                return True
+            if self.state == "paused":
+                self.state = "playing"
+                return True
+        return False
 
     # ---------- layout ----------
     def make_bricks(self):
@@ -141,23 +157,51 @@ class BrickBreakerGame(Widget):
                 ball['dx'] = BALL_SPEED * random.choice([-1, 1])
                 ball['dy'] = BALL_SPEED
 
+    def _hit_button(self, touch):
+        gx = (touch.x - self.x) / self.s
+        gy = (touch.y - self.y) / self.s
+        for key, x0, y0, x1, y1 in self._buttons:
+            if x0 <= gx <= x1 and y0 <= gy <= y1:
+                return key
+        return None
+
     def on_touch_down(self, touch):
         if self.state == "start":
+            touch.ud['menu'] = True
             self.state = "playing"
             self.reset_ball()
             return True
         if self.state in ("won", "lost"):
+            touch.ud['menu'] = True
             self.restart()
             return True
         if self.state == "paused":
-            self.state = "playing"
+            touch.ud['menu'] = True
+            hit = self._hit_button(touch)
+            if hit == 'resume':
+                self.state = "playing"
+            elif hit == 'powerups':
+                self.state = "powerups"
+            elif hit == 'restart':
+                self.restart()
+            return True
+        if self.state == "powerups":
+            touch.ud['menu'] = True
+            if self._hit_button(touch) == 'back':
+                self.state = "paused"
             return True
         if self.state == "playing":
+            if self._hit_button(touch) == 'pause':
+                touch.ud['menu'] = True
+                self.state = "paused"
+                return True
             self._launch_balls()
             self._move_paddle_to(touch)
             return True
 
     def on_touch_move(self, touch):
+        if touch.ud.get('menu'):
+            return True
         if self.state == "playing":
             self._move_paddle_to(touch)
             return True
@@ -310,16 +354,57 @@ class BrickBreakerGame(Widget):
             self._tex_cache[key] = tex
         return tex
 
-    def _draw_text(self, text, gx, gy, size, color=(1, 1, 1, 1)):
+    def _draw_text(self, text, gx, gy, size, color=(1, 1, 1, 1), align='center'):
         s = self.s
         tex = self._text_tex(text, max(8, int(size * s)))
         Color(*color)
-        Rectangle(texture=tex,
-                  pos=(self.x + gx * s - tex.width / 2, self.y + gy * s - tex.height / 2),
-                  size=tex.size)
+        px = self.x + gx * s
+        if align == 'center':
+            px -= tex.width / 2
+        Rectangle(texture=tex, pos=(px, self.y + gy * s - tex.height / 2), size=tex.size)
+
+    def _draw_overlay(self, alpha):
+        Color(0.02, 0.04, 0.09, alpha)
+        Rectangle(pos=self.pos, size=self.size)
+
+    def _draw_button(self, key, label, cx, cy, w, h, color):
+        s = self.s
+        Color(*color)
+        Rectangle(pos=(self.x + (cx - w / 2) * s, self.y + (cy - h / 2) * s),
+                  size=(w * s, h * s))
+        self._draw_text(label, cx, cy, 24)
+        self._buttons.append((key, cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2))
+
+    def _draw_powerups_page(self, cx, cy):
+        s = self.s
+        self._draw_overlay(0.96)
+        self._draw_text("POWER-UPS", cx, cy + 280, 36, (0.22, 0.74, 0.97, 1))
+        items = [
+            ('expand', "Wide Paddle",
+             ["Your paddle gets wider,", "so it's easier to catch the ball."]),
+            ('multiball', "Multi-Ball",
+             ["The balls will multiply with this.", "An extra ball joins the game."]),
+            ('sticky', "Sticky Paddle",
+             ["The ball sticks to your paddle.", "Tap to launch it again."]),
+        ]
+        for i, (key, name, lines) in enumerate(items):
+            y = cy + 140 - i * 170
+            color, letter = POWERUP_STYLE[key]
+            r = 30
+            Color(*color)
+            Ellipse(pos=(self.x + (70 - r) * s, self.y + (y - r) * s),
+                    size=(2 * r * s, 2 * r * s))
+            self._draw_text(letter, 70, y, 30)
+            self._draw_text(name, 125, y + 34, 25, color, align='left')
+            for j, line in enumerate(lines):
+                self._draw_text(line, 125, y - 4 - j * 30, 19, (0.85, 0.88, 0.92, 1), align='left')
+        self._draw_text("Catch falling power-ups with your paddle.", cx, cy - 275, 18,
+                        (0.6, 0.65, 0.72, 1))
+        self._draw_button('back', "Back", cx, cy - 345, 260, 60, (0.20, 0.45, 0.75, 1))
 
     def draw_everything(self):
         self.canvas.clear()
+        self._buttons = []
         with self.canvas:
             s = self.s
 
@@ -359,13 +444,29 @@ class BrickBreakerGame(Widget):
             self._draw_text("Score: %d" % self.score, 100, hud_y, 22)
             self._draw_text("Lives: %d" % self.lives, self.gw - 90, hud_y, 22)
 
-            # Messages
             cx, cy = self.gw / 2, self.gh / 2
+
+            # Pause button (top centre) while playing
+            if self.state == "playing":
+                bx, by = self.gw / 2, hud_y
+                Color(1, 1, 1, 0.85)
+                for dx in (-9, 3):
+                    Rectangle(pos=(self.x + (bx + dx) * s, self.y + (by - 13) * s),
+                              size=(6 * s, 26 * s))
+                self._buttons.append(('pause', bx - 40, by - 32, bx + 40, by + 32))
+
+            # Messages and menus
             if self.state == "start":
                 self._draw_text("BRICK BREAKER", cx, cy + 20, 34, (0.22, 0.74, 0.97, 1))
                 self._draw_text("Tap to start", cx, cy - 25, 24)
             elif self.state == "paused":
-                self._draw_text("Paused - tap to resume", cx, cy, 24)
+                self._draw_overlay(0.78)
+                self._draw_text("PAUSED", cx, cy + 150, 38, (0.22, 0.74, 0.97, 1))
+                self._draw_button('resume', "Resume", cx, cy + 50, 320, 64, (0.18, 0.55, 0.35, 1))
+                self._draw_button('powerups', "Power-ups?", cx, cy - 40, 320, 64, (0.20, 0.45, 0.75, 1))
+                self._draw_button('restart', "Restart", cx, cy - 130, 320, 64, (0.55, 0.25, 0.25, 1))
+            elif self.state == "powerups":
+                self._draw_powerups_page(cx, cy)
             elif self.state == "won":
                 self._draw_text("You win!", cx, cy + 20, 34, (0.18, 0.80, 0.44, 1))
                 self._draw_text("Tap to play again", cx, cy - 25, 24)
@@ -379,6 +480,16 @@ class BrickBreakerGame(Widget):
 class BrickBreakerApp(App):
     def build(self):
         return BrickBreakerGame()
+
+    def on_pause(self):
+        # Auto-pause when the app goes to the background; returning True keeps it alive.
+        game = self.root
+        if game is not None and game.state == "playing":
+            game.state = "paused"
+        return True
+
+    def on_resume(self):
+        pass
 
 
 if __name__ == '__main__':
