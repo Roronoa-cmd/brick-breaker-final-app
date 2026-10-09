@@ -1,4 +1,5 @@
 [app]
+android.ndk = 25b
 title = BrickBreakerPro
 package.name = brickbreaker
 package.domain = org.test
