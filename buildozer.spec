@@ -1,4 +1,5 @@
 [app]
+icon.filename = %(source.dir)s/icon.png
 android.ndk = 25b
 title = BrickBreakerPro
 package.name = brickbreaker
