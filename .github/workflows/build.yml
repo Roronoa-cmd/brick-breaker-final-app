@@ -1,28 +1,25 @@
+
 name: Build Android APK
-on: [push, workflow_dispatch]
+
+on:
+  push:
+  workflow_dispatch:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Build With Buildozer Tool
+        uses: Subely/buildozer-action@v1
         with:
-          python-version: '3.11'
+          command: buildozer -v android debug
 
-      - name: Install System Dependencies
-        run: sudo apt-get update && sudo apt-get install -y build-essential ccache git ffmpeg libgstreamer1.0-dev unzip zip libtool pkg-config autoconf automake libffi-dev libssl-dev openjdk-17-jdk shared-mime-info && pip install --upgrade pip && pip install buildozer cython==0.29.36 kivy
-
-      - name: Build APK with Buildozer
-        run: yes | buildozer -v android debug
-        env:
-          FORCE_HEX_ENV: 1
-
-      - name: Upload Finished APK Artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: brick-breaker-apk
+          name: android-apk
           path: bin/*.apk
