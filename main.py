@@ -7,16 +7,17 @@ from kivy.clock import Clock
 from kivy.core.window import Window
 from kivy.core.text import Label as CoreLabel
 from kivy.graphics import Color, Rectangle, Ellipse, RoundedRectangle, Line, Triangle, Quad
+from kivy.graphics.texture import Texture
 from kivy.utils import platform
 
 # Virtual game width. Height adapts to the phone's shape, so nothing is stretched.
 GAME_W = 600
 PADDLE_H = 18
-PADDLE_Y = 100
+PADDLE_Y = 160          # paddle sits higher so your finger doesn't cover it
 PADDLE_W0 = 100
 BALL_R = 8
 BALL_SPEED = 5
-ROWS, COLS = 5, 10
+ROWS, COLS = 8, 12      # more bricks
 BRICK_H = 24
 PAD, TOP, LEFT = 4, 100, 20
 
@@ -83,6 +84,13 @@ class BrickBreakerGame(Widget):
         self._tex_cache = {}
         self._buttons = []
         self._strip_colors = random.sample(BRICK_PALETTE, 5)
+        self._bricks_dirty = True
+        self.brick_layer = Widget()          # bricks live on their own layer (redrawn only when they change)
+        self.add_widget(self.brick_layer)
+        self._make_textures()
+        self._stars = [(random.random(), random.random(), random.uniform(1.0, 2.6),
+                        random.uniform(0, 6.28), random.uniform(0.8, 2.2), random.uniform(4, 14))
+                       for _ in range(46)]
         self._setup_loading()
         self.make_bricks()
 
@@ -173,6 +181,7 @@ class BrickBreakerGame(Widget):
     def layout_bricks(self):
         for b in self.bricks:
             b['y'] = self.gh - TOP - b['r'] * (BRICK_H + PAD)
+        self._bricks_dirty = True
 
     def _on_size(self, *args):
         if self.width <= 0 or self.height <= 0:
@@ -362,6 +371,7 @@ class BrickBreakerGame(Widget):
                 if (b['x'] <= ball['x'] <= b['x'] + b['w']
                         and b['y'] <= ball['y'] <= b['y'] + b['h']):
                     b['hp'] -= 1
+                    self._bricks_dirty = True
                     if b['hp'] <= 0:
                         b['alive'] = False
                         self.score += b['pts']
@@ -390,6 +400,84 @@ class BrickBreakerGame(Widget):
         if all(not b['alive'] for b in self.bricks):
             self.state = "won"
         self.draw_everything()
+
+    # ---------- background ----------
+    def _make_textures(self):
+        """A smooth gradient and a soft round glow, built once. Falls back to a flat color on any error."""
+        self._bg_tex = None
+        self._glow_tex = None
+        try:
+            stops = [(0.0, (0.04, 0.11, 0.21)), (0.5, (0.09, 0.08, 0.25)), (1.0, (0.03, 0.04, 0.11))]
+            n = 128
+            buf = bytearray()
+            for i in range(n):
+                f = i / (n - 1.0)
+                k = 0 if f <= 0.5 else 1
+                f0, c0 = stops[k]
+                f1, c1 = stops[k + 1]
+                u = (f - f0) / (f1 - f0)
+                buf += bytes([int((c0[j] + (c1[j] - c0[j]) * u) * 255) for j in range(3)]) + b'\xff'
+            tex = Texture.create(size=(1, n), colorfmt='rgba')
+            tex.blit_buffer(bytes(buf), colorfmt='rgba', bufferfmt='ubyte')
+            self._bg_tex = tex
+
+            size = 64
+            gb = bytearray()
+            for yy in range(size):
+                for xx in range(size):
+                    d = math.hypot((xx + 0.5) / size * 2 - 1, (yy + 0.5) / size * 2 - 1)
+                    a = max(0.0, 1.0 - d)
+                    a = a * a * (3 - 2 * a)
+                    gb += bytes([255, 255, 255, int(a * 255)])
+            gt = Texture.create(size=(size, size), colorfmt='rgba')
+            gt.blit_buffer(bytes(gb), colorfmt='rgba', bufferfmt='ubyte')
+            self._glow_tex = gt
+        except Exception:
+            self._bg_tex = None
+            self._glow_tex = None
+
+    def _glow(self, gx, gy, rw, rh, color):
+        if self._glow_tex is None:
+            return
+        s = self.s
+        self._color(color)
+        Rectangle(texture=self._glow_tex,
+                  pos=(self.x + (gx - rw) * s, self.y + (gy - rh) * s),
+                  size=(2 * rw * s, 2 * rh * s))
+
+    def _draw_background(self):
+        s = self.s
+        if self._bg_tex is not None:
+            Color(1, 1, 1, 1)
+            Rectangle(texture=self._bg_tex, pos=self.pos, size=self.size)
+        else:
+            Color(0.06, 0.09, 0.16, 1)
+            Rectangle(pos=self.pos, size=self.size)
+
+        # slow-moving colored nebula glows
+        sway = math.sin(self.t * 0.25) * 18
+        self._glow(self.gw * 0.18 + sway, self.gh * 0.80, 300, 300, (0.55, 0.30, 0.95, 0.22))
+        self._glow(self.gw * 0.88 - sway, self.gh * 0.40, 320, 320, (0.15, 0.65, 0.95, 0.16))
+        self._glow(self.gw * 0.50, self.gh * 0.58, 230, 230, (0.95, 0.35, 0.65, 0.07))
+        # soft light on the floor around the paddle
+        self._glow(self.gw * 0.5, self.paddle_y, 400, 130, (0.20, 0.70, 0.97, 0.20))
+
+        # twinkling stars drifting slowly downward
+        for fx, fy, sz, ph, sp, drift in self._stars:
+            gx = fx * self.gw
+            gy = (fy * self.gh - self.t * drift) % self.gh
+            a = 0.25 + 0.55 * (0.5 + 0.5 * math.sin(self.t * sp + ph))
+            Color(0.80, 0.88, 1.0, a)
+            Rectangle(pos=(self.x + (gx - sz / 2) * s, self.y + (gy - sz / 2) * s), size=(sz * s, sz * s))
+
+    def _redraw_bricks(self):
+        layer = self.brick_layer
+        layer.canvas.clear()
+        with layer.canvas:
+            for b in self.bricks:
+                if b['alive']:
+                    self._draw_brick(b)
+        self._bricks_dirty = False
 
     # ---------- drawing primitives (all coordinates are game units) ----------
     def _text_tex(self, text, px):
@@ -725,20 +813,16 @@ class BrickBreakerGame(Widget):
 
     # ---------- main draw ----------
     def draw_everything(self):
+        if self._bricks_dirty:
+            self._redraw_bricks()
         self.canvas.clear()
-        self._buttons = []
         with self.canvas:
+            self._draw_background()
+        self.canvas.after.clear()
+        self._buttons = []
+        with self.canvas.after:
             s = self.s
             pulse = 0.5 + 0.5 * math.sin(self.t * 3)
-
-            # Background
-            Color(0.06, 0.09, 0.16, 1)
-            Rectangle(pos=self.pos, size=self.size)
-
-            # Bricks
-            for b in self.bricks:
-                if b['alive']:
-                    self._draw_brick(b)
 
             # Paddle
             self._draw_paddle(pulse)
