@@ -11,7 +11,7 @@ from kivy.utils import platform
 
 # Virtual game width. Height adapts to the phone's shape, so nothing is stretched.
 GAME_W = 600
-PADDLE_H = 14
+PADDLE_H = 18
 PADDLE_Y = 100
 PADDLE_W0 = 100
 BALL_R = 8
@@ -20,22 +20,39 @@ ROWS, COLS = 5, 10
 BRICK_H = 24
 PAD, TOP, LEFT = 4, 100, 20
 
-COLORS = [
-    [0.91, 0.30, 0.24, 1],  # Red
-    [0.90, 0.49, 0.13, 1],  # Orange
-    [0.95, 0.77, 0.06, 1],  # Yellow
-    [0.18, 0.80, 0.44, 1],  # Green
-    [0.20, 0.60, 0.86, 1],  # Blue
+LOAD_TIME = 2.8          # seconds the loading screen is shown
+LOAD_ROWS, LOAD_COLS = 4, 8
+
+# Bricks get random colors from this palette every game.
+BRICK_PALETTE = [
+    (0.91, 0.30, 0.24, 1),  # red
+    (0.95, 0.55, 0.15, 1),  # orange
+    (0.97, 0.80, 0.10, 1),  # yellow
+    (0.62, 0.85, 0.20, 1),  # lime
+    (0.18, 0.80, 0.44, 1),  # green
+    (0.10, 0.74, 0.69, 1),  # teal
+    (0.20, 0.78, 0.95, 1),  # cyan
+    (0.24, 0.55, 0.95, 1),  # blue
+    (0.43, 0.40, 0.95, 1),  # indigo
+    (0.66, 0.38, 0.88, 1),  # purple
+    (0.95, 0.40, 0.70, 1),  # pink
+    (0.85, 0.25, 0.55, 1),  # magenta
 ]
-DURABLE_COLOR = [0.50, 0.55, 0.55, 1]
-CRACKED_COLOR = [0.74, 0.76, 0.78, 1]
 ACCENT = (0.22, 0.74, 0.97, 1)
 
-# Each powerup has its own color and letter so you can tell them apart in play.
+TIPS = [
+    "Tip: Catch the falling power-ups!",
+    "Tip: Silver-framed bricks take 2 hits.",
+    "Tip: Hit with the paddle edge to change the angle.",
+    "Tip: Sticky paddle lets you aim your launch.",
+    "Tip: Multi-ball makes clearing bricks faster.",
+]
+
+# Each powerup has its own color (and a drawn picture, see _draw_pictogram).
 POWERUP_STYLE = {
-    'expand':    ([0.18, 0.80, 0.44, 1], 'W'),  # green  W = wider paddle
-    'multiball': ([0.95, 0.60, 0.10, 1], 'M'),  # orange M = extra ball
-    'sticky':    ([0.69, 0.35, 0.85, 1], 'S'),  # purple S = sticky paddle
+    'expand':    ([0.18, 0.80, 0.44, 1], 'W'),  # green  = wider paddle
+    'multiball': ([0.95, 0.60, 0.10, 1], 'M'),  # orange = extra ball
+    'sticky':    ([0.69, 0.35, 0.85, 1], 'S'),  # purple = sticky paddle
 }
 
 Window.clearcolor = (0.06, 0.09, 0.16, 1)
@@ -44,7 +61,7 @@ Window.clearcolor = (0.06, 0.09, 0.16, 1)
 class BrickBreakerGame(Widget):
     score = NumericProperty(0)
     lives = NumericProperty(3)
-    state = StringProperty("start")  # start, playing, paused, powerups, won, lost
+    state = StringProperty("loading")  # loading, start, playing, paused, powerups, won, lost
 
     def __init__(self, **kwargs):
         super(BrickBreakerGame, self).__init__(**kwargs)
@@ -52,6 +69,7 @@ class BrickBreakerGame(Widget):
         self.gh = 1000.0
         self.s = 1.0
         self.t = 0.0                     # animation clock
+        self._amul = 1.0                 # alpha multiplier (used for fades)
         self.paddle_w = PADDLE_W0
         self.paddle_x = (self.gw - self.paddle_w) / 2
         self.paddle_y = PADDLE_Y
@@ -64,6 +82,8 @@ class BrickBreakerGame(Widget):
         self.key_right = False
         self._tex_cache = {}
         self._buttons = []
+        self._strip_colors = random.sample(BRICK_PALETTE, 5)
+        self._setup_loading()
         self.make_bricks()
 
         # Keyboard only on desktop. On Android this would pop up the soft keyboard.
@@ -77,6 +97,14 @@ class BrickBreakerGame(Widget):
         Clock.schedule_interval(self.update, 1.0 / 60.0)
         self.bind(size=self._on_size, pos=self._on_size)
         Window.bind(on_keyboard=self._on_window_key)
+
+    def _setup_loading(self):
+        self.load_t = 0.0
+        n = LOAD_ROWS * LOAD_COLS
+        self._tip = random.choice(TIPS)
+        self._load_order = list(range(n))
+        random.shuffle(self._load_order)
+        self._load_colors = [random.choice(BRICK_PALETTE) for _ in range(n)]
 
     # ---------- keyboard (desktop only) ----------
     def _keyboard_closed(self):
@@ -121,18 +149,25 @@ class BrickBreakerGame(Widget):
 
     # ---------- layout ----------
     def make_bricks(self):
+        """Random colors: no two neighbours (left / above) share a color."""
         self.bricks = []
         bw = (self.gw - LEFT * 2 - PAD * (COLS - 1)) / COLS
+        prev_row = [None] * COLS
         for r in range(ROWS):
+            left = None
             for c in range(COLS):
-                hp = 2 if r == 0 else 1
+                choices = [col for col in BRICK_PALETTE if col != left and col != prev_row[c]]
+                color = random.choice(choices)
+                tough = random.random() < 0.18          # silver-framed, needs 2 hits
                 self.bricks.append({
                     'r': r, 'c': c,
                     'x': LEFT + c * (bw + PAD), 'y': 0,
                     'w': bw, 'h': BRICK_H,
-                    'color': DURABLE_COLOR if hp == 2 else COLORS[r % len(COLORS)],
-                    'hp': hp, 'pts': (ROWS - r) * 10, 'alive': True,
+                    'color': color, 'hp': 2 if tough else 1, 'cracked': False,
+                    'pts': (ROWS - r) * 10 + (10 if tough else 0), 'alive': True,
                 })
+                left = color
+                prev_row[c] = color
         self.layout_bricks()
 
     def layout_bricks(self):
@@ -169,6 +204,9 @@ class BrickBreakerGame(Widget):
         return None
 
     def on_touch_down(self, touch):
+        if self.state == "loading":
+            touch.ud['menu'] = True
+            return True
         if self.state == "start":
             touch.ud['menu'] = True
             self.state = "playing"
@@ -255,6 +293,14 @@ class BrickBreakerGame(Widget):
 
     def update(self, dt):
         self.t += dt
+
+        if self.state == "loading":
+            self.load_t += dt
+            if self.load_t >= LOAD_TIME:
+                self.state = "start"
+            self.draw_everything()
+            return
+
         if self.state != "playing":
             self.draw_everything()
             return
@@ -325,7 +371,7 @@ class BrickBreakerGame(Widget):
                                 'type': random.choice(list(POWERUP_STYLE.keys())),
                             })
                     else:
-                        b['color'] = CRACKED_COLOR
+                        b['cracked'] = True
                     ball['dy'] = -ball['dy']
                     break
 
@@ -350,7 +396,7 @@ class BrickBreakerGame(Widget):
         key = (text, px)
         tex = self._tex_cache.get(key)
         if tex is None:
-            if len(self._tex_cache) > 200:
+            if len(self._tex_cache) > 250:
                 self._tex_cache.clear()
             lbl = CoreLabel(text=text, font_size=px, bold=True)
             lbl.refresh()
@@ -358,10 +404,14 @@ class BrickBreakerGame(Widget):
             self._tex_cache[key] = tex
         return tex
 
+    def _color(self, c):
+        a = c[3] if len(c) > 3 else 1.0
+        Color(c[0], c[1], c[2], a * self._amul)
+
     def _draw_text(self, text, gx, gy, size, color=(1, 1, 1, 1), align='center'):
         s = self.s
         tex = self._text_tex(text, max(8, int(size * s)))
-        Color(*color)
+        self._color(color)
         px = self.x + gx * s
         if align == 'center':
             px -= tex.width / 2
@@ -369,28 +419,28 @@ class BrickBreakerGame(Widget):
 
     def _circle(self, gx, gy, r, color):
         s = self.s
-        Color(*color)
+        self._color(color)
         Ellipse(pos=(self.x + (gx - r) * s, self.y + (gy - r) * s), size=(2 * r * s, 2 * r * s))
 
     def _rect(self, gx, gy, w, h, color):
         s = self.s
-        Color(*color)
+        self._color(color)
         Rectangle(pos=(self.x + gx * s, self.y + gy * s), size=(w * s, h * s))
 
     def _rrect(self, gx, gy, w, h, r, color):
         s = self.s
-        Color(*color)
+        self._color(color)
         RoundedRectangle(pos=(self.x + gx * s, self.y + gy * s), size=(w * s, h * s), radius=[r * s])
 
     def _rborder(self, gx, gy, w, h, r, color, width=2):
         s = self.s
-        Color(*color)
+        self._color(color)
         Line(rounded_rectangle=(self.x + gx * s, self.y + gy * s, w * s, h * s, r * s),
              width=max(1.0, width * s))
 
     def _tri(self, pts, color):
         s = self.s
-        Color(*color)
+        self._color(color)
         flat = []
         for (gx, gy) in pts:
             flat += [self.x + gx * s, self.y + gy * s]
@@ -398,7 +448,7 @@ class BrickBreakerGame(Widget):
 
     def _quad(self, pts, color):
         s = self.s
-        Color(*color)
+        self._color(color)
         flat = []
         for (gx, gy) in pts:
             flat += [self.x + gx * s, self.y + gy * s]
@@ -429,7 +479,7 @@ class BrickBreakerGame(Widget):
             for i in range(n + 1):
                 a = a0 + (a1 - a0) * i / n
                 pts += [self.x + (gx + R * math.sin(a)) * s, self.y + (gy + R * math.cos(a)) * s]
-            Color(*color)
+            self._color(color)
             Line(points=pts, width=max(2.0, 3.2 * s))
             ex, ey = gx + R * math.sin(a1), gy + R * math.cos(a1)
             tx, ty = math.cos(a1), -math.sin(a1)            # direction of travel at the end
@@ -458,6 +508,83 @@ class BrickBreakerGame(Widget):
             self._circle(gx, gy + 2 * k, 11 * k, white)
             self._circle(gx - 15 * k, gy - 27 * k, 3.5 * k, white)
             self._circle(gx + 9 * k, gy - 29 * k, 3.5 * k, white)
+
+    def _draw_powerup_badge(self, key, gx, gy, r, pulse):
+        """Same picture as the Power-ups page, used for the falling pick-ups."""
+        color = POWERUP_STYLE[key][0]
+        self._circle(gx, gy, r * 1.3, (color[0], color[1], color[2], 0.14 + 0.10 * pulse))
+        self._circle(gx, gy, r + 1.5, (color[0] * 0.6, color[1] * 0.6, color[2] * 0.6, 1))
+        self._circle(gx, gy + 0.8, r, color)
+        self._draw_pictogram(key, gx, gy, r / 44.0 * 1.15)
+
+    # ---------- game objects ----------
+    def _draw_brick(self, b):
+        s = self.s
+        x0 = self.x + b['x'] * s
+        y0 = self.y + b['y'] * s
+        w = b['w'] * s
+        h = b['h'] * s
+        c = b['color']
+        if b['hp'] > 1:
+            # tough brick: silver frame around a darker inner bevel
+            Color(0.86, 0.89, 0.93, 1)
+            Rectangle(pos=(x0, y0), size=(w, h))
+            i = 2.5 * s
+            Color(c[0] * 0.55, c[1] * 0.55, c[2] * 0.55, 1)
+            Rectangle(pos=(x0 + i, y0 + i), size=(w - 2 * i, h - 2 * i))
+            Color(c[0], c[1], c[2], 1)
+            Rectangle(pos=(x0 + i, y0 + i + 2 * s), size=(w - 2 * i, h - 2 * i - 2 * s))
+            Color(1, 1, 1, 0.28)
+            Rectangle(pos=(x0 + i + 2 * s, y0 + h - i - 4 * s), size=(w - 2 * i - 4 * s, 2 * s))
+        else:
+            Color(c[0] * 0.58, c[1] * 0.58, c[2] * 0.58, 1)       # dark lower edge
+            Rectangle(pos=(x0, y0), size=(w, h))
+            Color(c[0], c[1], c[2], 1)                             # face
+            Rectangle(pos=(x0, y0 + 3 * s), size=(w, h - 3 * s))
+            Color(1, 1, 1, 0.30)                                   # shine
+            Rectangle(pos=(x0 + 2 * s, y0 + h - 6 * s), size=(w - 4 * s, 3 * s))
+        if b['cracked']:
+            Color(0, 0, 0, 0.6)
+            Line(points=[x0 + w * 0.30, y0 + h, x0 + w * 0.42, y0 + h * 0.62,
+                         x0 + w * 0.33, y0 + h * 0.40, x0 + w * 0.52, y0 + h * 0.12,
+                         x0 + w * 0.50, y0],
+                 width=max(1.0, 1.5 * s))
+            Line(points=[x0 + w * 0.42, y0 + h * 0.62, x0 + w * 0.62, y0 + h * 0.50,
+                         x0 + w * 0.74, y0 + h * 0.20],
+                 width=max(1.0, 1.2 * s))
+
+    def _draw_paddle(self, pulse):
+        x, y, w, h = self.paddle_x, self.paddle_y, self.paddle_w, PADDLE_H
+        r = h / 2.0
+        if self.is_sticky:
+            col = (0.72, 0.40, 0.92, 1)
+        else:
+            col = (0.22, 0.74, 0.97, 1)
+        dark = (col[0] * 0.45, col[1] * 0.45, col[2] * 0.45, 1)
+
+        # neon glow
+        self._rrect(x - 10, y - 10, w + 20, h + 20, r + 10, (col[0], col[1], col[2], 0.07 + 0.04 * pulse))
+        self._rrect(x - 5, y - 5, w + 10, h + 10, r + 5, (col[0], col[1], col[2], 0.12 + 0.05 * pulse))
+        # body: dark lower edge, bright face, top shine
+        self._rrect(x, y - 3, w, h, r, dark)
+        self._rrect(x, y, w, h, r, col)
+        self._rrect(x + r, y + h * 0.56, w - 2 * r, h * 0.30, h * 0.15, (1, 1, 1, 0.5))
+        # darker end bumpers and a center badge
+        self._circle(x + r, y + h / 2, r * 0.62, (dark[0], dark[1], dark[2], 0.6))
+        self._circle(x + w - r, y + h / 2, r * 0.62, (dark[0], dark[1], dark[2], 0.6))
+        self._rrect(x + w / 2 - 15, y + h * 0.30, 30, h * 0.40, h * 0.20, (dark[0], dark[1], dark[2], 0.5))
+        # sticky: wobbling glue drips under the paddle
+        if self.is_sticky:
+            for i in range(4):
+                px = x + w * (i + 1) / 5.0
+                d = 6 + 3 * math.sin(self.t * 3 + i * 1.7)
+                self._rect(px - 1.5, y - 3 - d, 3, d + 3, col)
+                self._circle(px, y - 3 - d, 3.6, col)
+
+    def _draw_ball(self, ball, pulse):
+        self._circle(ball['x'], ball['y'], BALL_R + 7, (0.7, 0.88, 1, 0.14 + 0.06 * pulse))
+        self._circle(ball['x'], ball['y'], BALL_R, (0.86, 0.93, 1, 1))
+        self._circle(ball['x'] - 2.5, ball['y'] + 2.5, BALL_R * 0.38, (1, 1, 1, 1))
 
     # ---------- buttons and menus ----------
     def _draw_button(self, key, label, icon, cx, cy, w, h, color):
@@ -489,9 +616,8 @@ class BrickBreakerGame(Widget):
         self._rborder(x, y, pw, ph, 28, (0.22, 0.74, 0.97, 0.5 + 0.35 * pulse), 2.5)
 
         # row of mini bricks as decoration
-        strip = [DURABLE_COLOR, COLORS[1], COLORS[2], COLORS[3], COLORS[4]]
         sx0 = cx - (5 * 40 + 4 * 6) / 2
-        for i, col in enumerate(strip):
+        for i, col in enumerate(self._strip_colors):
             self._rrect(sx0 + i * 46, cy + 205, 40, 16, 4, col)
             self._rrect(sx0 + i * 46 + 3, cy + 212, 34, 5, 2, (1, 1, 1, 0.25))
 
@@ -521,7 +647,7 @@ class BrickBreakerGame(Widget):
              ["The ball sticks to your paddle.", "Tap to launch it again."]),
         ]
         for i, (key, name, lines) in enumerate(items):
-            color, letter = POWERUP_STYLE[key]
+            color = POWERUP_STYLE[key][0]
             yc = cy + 150 - i * 160
             x, w, h = cx - 270, 540, 140
             by = yc - h / 2
@@ -530,11 +656,7 @@ class BrickBreakerGame(Widget):
             self._rrect(x + 5, by + h * 0.5, w - 10, h * 0.5 - 5, 18, (1, 1, 1, 0.04))
             self._rborder(x, by, w, h, 22, (color[0], color[1], color[2], 0.65), 2)
 
-            ix = x + 82
-            self._circle(ix, yc, 54 + 4 * pulse, (color[0], color[1], color[2], 0.16))
-            self._circle(ix, yc, 46, (color[0] * 0.6, color[1] * 0.6, color[2] * 0.6, 1))
-            self._circle(ix, yc + 1.5, 44, color)
-            self._draw_pictogram(key, ix, yc)
+            self._draw_powerup_badge(key, x + 82, yc, 44, pulse)
 
             self._draw_text(name, x + 150, yc + 34, 26, color, align='left')
             for j, line in enumerate(lines):
@@ -543,6 +665,63 @@ class BrickBreakerGame(Widget):
         self._draw_text("Catch falling power-ups with your paddle.", cx, cy - 275, 18,
                         (0.6, 0.67, 0.76, 1))
         self._draw_button('back', "Back", 'back', cx, cy - 345, 300, 62, (0.20, 0.45, 0.80, 1))
+
+    # ---------- loading screen ----------
+    def _draw_loading(self, cx, cy):
+        p = min(1.0, self.load_t / LOAD_TIME)
+        e = p * p * (3 - 2 * p)                                   # smooth progress
+        fade = max(0.0, min(1.0, (LOAD_TIME - self.load_t) / 0.4))  # fades out at the end
+
+        Color(0.06, 0.09, 0.16, fade)
+        Rectangle(pos=self.pos, size=self.size)
+        self._amul = fade
+
+        # soft glow behind the logo
+        for rad, al in ((270, 0.025), (205, 0.03), (145, 0.04)):
+            self._circle(cx, cy + 170, rad, (0.22, 0.74, 0.97, al))
+
+        # a wall of random-colored bricks that builds up as the bar fills
+        bw, bh, gap = 40, 16, 6
+        x0 = cx - (LOAD_COLS * bw + (LOAD_COLS - 1) * gap) / 2
+        ytop = cy + 215
+        n = LOAD_ROWS * LOAD_COLS
+        for r in range(LOAD_ROWS):
+            for c in range(LOAD_COLS):
+                i = r * LOAD_COLS + c
+                t = max(0.0, min(1.0, (e * (n + 6) - self._load_order[i]) / 5.0))
+                if t <= 0:
+                    continue
+                sc = 0.4 + 0.6 * t                                  # pop-in
+                col = self._load_colors[i]
+                w_, h_ = bw * sc, bh * sc
+                bx = x0 + c * (bw + gap) + bw / 2 - w_ / 2
+                by = ytop - r * (bh + gap) - bh / 2 - h_ / 2
+                self._rect(bx, by, w_, h_, (col[0] * 0.58, col[1] * 0.58, col[2] * 0.58, t))
+                self._rect(bx, by + 3 * sc, w_, h_ - 3 * sc, (col[0], col[1], col[2], t))
+                self._rect(bx + 2, by + h_ - 6 * sc, max(0.0, w_ - 4), 3 * sc, (1, 1, 1, 0.3 * t))
+
+        # title
+        self._draw_text("BRICK BREAKER", cx, cy + 60, 50, (0.22, 0.74, 0.97, 0.25))
+        self._draw_text("BRICK BREAKER", cx, cy + 60, 44, (0.87, 0.95, 1, 1))
+        self._draw_text("Smash every brick!", cx, cy + 15, 22, (0.55, 0.63, 0.75, 1))
+
+        # progress bar with a ball at the head
+        barw, barh = 420, 20
+        bx, by = cx - barw / 2, cy - 80
+        fill = max(barh, barw * e)
+        self._rrect(bx, by, barw, barh, 10, (1, 1, 1, 0.10))
+        self._rrect(bx, by, fill, barh, 10, (0.20, 0.55, 0.95, 1))
+        self._rrect(bx + 3, by + barh * 0.5, max(1.0, fill - 6), barh * 0.4, 4, (1, 1, 1, 0.25))
+        self._rborder(bx, by, barw, barh, 10, (1, 1, 1, 0.25), 1.5)
+        hx = bx + max(barh / 2.0, barw * e)
+        self._circle(hx, by + barh / 2, 22, (0.55, 0.85, 1, 0.22))
+        self._circle(hx, by + barh / 2, 13, (0.86, 0.93, 1, 1))
+        self._circle(hx - 3, by + barh / 2 + 3, 5, (1, 1, 1, 1))
+
+        self._draw_text("Loading... %d%%" % int(e * 100), cx, cy - 125, 22, (0.85, 0.9, 0.95, 1))
+        self._draw_text(self._tip, cx, cy - 190, 18, (0.55, 0.63, 0.75, 1))
+
+        self._amul = 1.0
 
     # ---------- main draw ----------
     def draw_everything(self):
@@ -559,27 +738,18 @@ class BrickBreakerGame(Widget):
             # Bricks
             for b in self.bricks:
                 if b['alive']:
-                    Color(*b['color'])
-                    Rectangle(pos=(self.x + b['x'] * s, self.y + b['y'] * s),
-                              size=(b['w'] * s, b['h'] * s))
+                    self._draw_brick(b)
 
             # Paddle
-            Color(0.22, 0.74, 0.97, 1)
-            Rectangle(pos=(self.x + self.paddle_x * s, self.y + self.paddle_y * s),
-                      size=(self.paddle_w * s, PADDLE_H * s))
+            self._draw_paddle(pulse)
 
-            # Falling powerups: glowing colored circle with a letter
+            # Falling powerups: same pictures as the Power-ups page
             for p in self.powerups:
-                color, letter = POWERUP_STYLE[p['type']]
-                self._circle(p['x'], p['y'], 22, (color[0], color[1], color[2], 0.18 + 0.12 * pulse))
-                self._circle(p['x'], p['y'], 15, color)
-                self._draw_text(letter, p['x'], p['y'], 19, (1, 1, 1, 1))
+                self._draw_powerup_badge(p['type'], p['x'], p['y'], 26, pulse)
 
             # Balls
-            Color(0.97, 0.98, 0.98, 1)
             for ball in self.balls:
-                Ellipse(pos=(self.x + (ball['x'] - BALL_R) * s, self.y + (ball['y'] - BALL_R) * s),
-                        size=(BALL_R * 2 * s, BALL_R * 2 * s))
+                self._draw_ball(ball, pulse)
 
             # HUD
             hud_y = self.gh - 55
@@ -601,7 +771,7 @@ class BrickBreakerGame(Widget):
                 self._buttons.append(('pause', bx - 40, by - 34, bx + 40, by + 34))
 
             # Messages and menus
-            if self.state == "start":
+            if self.state in ("start", "loading"):
                 self._draw_overlay(0.45)
                 self._draw_text("BRICK BREAKER", cx, cy + 25, 40, (0.22, 0.74, 0.97, 0.25 + 0.2 * pulse))
                 self._draw_text("BRICK BREAKER", cx, cy + 25, 36, (0.85, 0.95, 1, 1))
@@ -623,6 +793,10 @@ class BrickBreakerGame(Widget):
             elif self.state == "playing" and any(b['caught'] for b in self.balls):
                 self._draw_text("Tap to launch", cx, self.paddle_y + 120, 22,
                                 (0.8, 0.85, 0.9, 0.55 + 0.45 * pulse))
+
+            # Loading screen sits on top of everything and fades out into the start screen
+            if self.state == "loading":
+                self._draw_loading(cx, cy)
 
 
 class BrickBreakerApp(App):
