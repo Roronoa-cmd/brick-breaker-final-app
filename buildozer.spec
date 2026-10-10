@@ -1,4 +1,6 @@
 [app]
+presplash.filename = %(source.dir)s/presplash.png
+android.presplash_color = #0F1729
 icon.filename = %(source.dir)s/icon.png
 android.ndk = 25b
 title = BrickBreakerPro
