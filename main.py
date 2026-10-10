@@ -26,18 +26,18 @@ LOAD_ROWS, LOAD_COLS = 4, 8
 
 # Bricks get random colors from this palette every game.
 BRICK_PALETTE = [
-    (0.91, 0.30, 0.24, 1),  # red
-    (0.95, 0.55, 0.15, 1),  # orange
-    (0.97, 0.80, 0.10, 1),  # yellow
-    (0.62, 0.85, 0.20, 1),  # lime
-    (0.18, 0.80, 0.44, 1),  # green
-    (0.10, 0.74, 0.69, 1),  # teal
-    (0.20, 0.78, 0.95, 1),  # cyan
-    (0.24, 0.55, 0.95, 1),  # blue
-    (0.43, 0.40, 0.95, 1),  # indigo
-    (0.66, 0.38, 0.88, 1),  # purple
-    (0.95, 0.40, 0.70, 1),  # pink
-    (0.85, 0.25, 0.55, 1),  # magenta
+    (0.91, 0.30, 0.24, 1),   # red
+    (0.95, 0.55, 0.15, 1),   # orange
+    (0.97, 0.80, 0.10, 1),   # yellow
+    (0.62, 0.85, 0.20, 1),   # lime
+    (0.18, 0.80, 0.44, 1),   # green
+    (0.10, 0.74, 0.69, 1),   # teal
+    (0.20, 0.78, 0.95, 1),   # cyan
+    (0.24, 0.55, 0.95, 1),   # blue
+    (0.43, 0.40, 0.95, 1),   # indigo
+    (0.66, 0.38, 0.88, 1),   # purple
+    (0.95, 0.40, 0.70, 1),   # pink
+    (0.85, 0.25, 0.55, 1),   # magenta
 ]
 ACCENT = (0.22, 0.74, 0.97, 1)
 
@@ -51,9 +51,9 @@ TIPS = [
 
 # Each powerup has its own color (and a drawn picture, see _draw_pictogram).
 POWERUP_STYLE = {
-    'expand':    ([0.18, 0.80, 0.44, 1], 'W'),  # green  = wider paddle
-    'multiball': ([0.95, 0.60, 0.10, 1], 'M'),  # orange = extra ball
-    'sticky':    ([0.69, 0.35, 0.85, 1], 'S'),  # purple = sticky paddle
+    'expand':    ([0.18, 0.80, 0.44, 1], 'W'),   # green  = wider paddle
+    'multiball': ([0.95, 0.60, 0.10, 1], 'M'),   # orange = extra ball
+    'sticky':    ([0.69, 0.35, 0.85, 1], 'S'),   # purple = sticky paddle
 }
 
 Window.clearcolor = (0.06, 0.09, 0.16, 1)
@@ -62,7 +62,7 @@ Window.clearcolor = (0.06, 0.09, 0.16, 1)
 class BrickBreakerGame(Widget):
     score = NumericProperty(0)
     lives = NumericProperty(3)
-    state = StringProperty("loading")  # loading, start, playing, paused, powerups, won, lost
+    state = StringProperty("loading")   # loading, start, playing, paused, powerups, won, lost
 
     def __init__(self, **kwargs):
         super(BrickBreakerGame, self).__init__(**kwargs)
@@ -678,8 +678,8 @@ class BrickBreakerGame(Widget):
     def _draw_button(self, key, label, icon, cx, cy, w, h, color):
         x, y = cx - w / 2, cy - h / 2
         dark = (color[0] * 0.55, color[1] * 0.55, color[2] * 0.55, 1)
-        self._rrect(x, y - 7, w, h, 18, (0, 0, 0, 0.45))             # drop shadow
-        self._rrect(x, y - 4, w, h, 18, dark)                         # 3D edge
+        self._rrect(x, y - 7, w, h, 18, (0, 0, 0, 0.45))               # drop shadow
+        self._rrect(x, y - 4, w, h, 18, dark)                        # 3D edge
         self._rrect(x, y, w, h, 18, color)                            # face
         self._rrect(x + 6, y + h * 0.5, w - 12, h * 0.5 - 6, 12, (1, 1, 1, 0.15))  # gloss
         self._rborder(x, y, w, h, 18, (1, 1, 1, 0.35), 1.5)
@@ -698,7 +698,7 @@ class BrickBreakerGame(Widget):
         for i in (3, 2, 1, 0):
             self._rrect(x - 5 - i * 6, y - 5 - i * 6, pw + 10 + i * 12, ph + 10 + i * 12,
                         30 + i * 5, (0.22, 0.74, 0.97, 0.035 + 0.02 * pulse))
-        self._rrect(x, y - 9, pw, ph, 28, (0, 0, 0, 0.5))           # shadow
+        self._rrect(x, y - 9, pw, ph, 28, (0, 0, 0, 0.5))            # shadow
         self._rrect(x, y, pw, ph, 28, (0.08, 0.12, 0.22, 0.98))      # panel
         self._rrect(x + 8, y + ph * 0.55, pw - 16, ph * 0.45 - 8, 22, (1, 1, 1, 0.04))
         self._rborder(x, y, pw, ph, 28, (0.22, 0.74, 0.97, 0.5 + 0.35 * pulse), 2.5)
@@ -757,7 +757,7 @@ class BrickBreakerGame(Widget):
     # ---------- loading screen ----------
     def _draw_loading(self, cx, cy):
         p = min(1.0, self.load_t / LOAD_TIME)
-        e = p * p * (3 - 2 * p)                                   # smooth progress
+        e = p * p * (3 - 2 * p)                            # smooth progress
         fade = max(0.0, min(1.0, (LOAD_TIME - self.load_t) / 0.4))  # fades out at the end
 
         Color(0.06, 0.09, 0.16, fade)
@@ -779,7 +779,7 @@ class BrickBreakerGame(Widget):
                 t = max(0.0, min(1.0, (e * (n + 6) - self._load_order[i]) / 5.0))
                 if t <= 0:
                     continue
-                sc = 0.4 + 0.6 * t                                  # pop-in
+                sc = 0.4 + 0.6 * t                             # pop-in
                 col = self._load_colors[i]
                 w_, h_ = bw * sc, bh * sc
                 bx = x0 + c * (bw + gap) + bw / 2 - w_ / 2
