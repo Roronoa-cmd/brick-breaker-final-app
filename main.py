@@ -1005,8 +1005,10 @@ class BrickBreakerGame(Widget):
     def draw_everything(self):
         if self._bricks_dirty:
             self._redraw_bricks()
-        self.canvas.clear()
-        with self.canvas:
+        # Three layers, drawn in this order: canvas.before (background), canvas (holds the
+        # bricks' layer, never cleared!), canvas.after (everything else).
+        self.canvas.before.clear()
+        with self.canvas.before:
             self._draw_background()
         self.canvas.after.clear()
         self._buttons = []
