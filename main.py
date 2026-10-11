@@ -1,5 +1,8 @@
+import base64
 import math
+import os
 import random
+import zlib
 from kivy.app import App
 from kivy.uix.widget import Widget
 from kivy.properties import NumericProperty, StringProperty
@@ -9,6 +12,16 @@ from kivy.core.text import Label as CoreLabel
 from kivy.graphics import Color, Rectangle, Ellipse, RoundedRectangle, Line, Triangle, Quad
 from kivy.graphics.texture import Texture
 from kivy.utils import platform
+from kivy.metrics import dp
+
+try:
+    from kivy.core.audio import SoundLoader
+except Exception:
+    SoundLoader = None
+try:
+    import audio_data        # the generated sounds and music (see audio_data.py)
+except Exception:
+    audio_data = None
 
 # Virtual game width. Height adapts to the phone's shape, so nothing is stretched.
 GAME_W = 600
@@ -23,25 +36,27 @@ PAD, TOP, LEFT = 4, 100, 20
 
 LOAD_TIME = 2.8          # seconds the loading screen is shown
 LOAD_ROWS, LOAD_COLS = 4, 8
+DRAG_SENS = 1.15         # the paddle only moves by sliding; how far it goes per finger movement
 
 # Bricks get random colors from this palette every game.
 BRICK_PALETTE = [
-    (0.91, 0.30, 0.24, 1),   # red
-    (0.95, 0.55, 0.15, 1),   # orange
-    (0.97, 0.80, 0.10, 1),   # yellow
-    (0.62, 0.85, 0.20, 1),   # lime
-    (0.18, 0.80, 0.44, 1),   # green
-    (0.10, 0.74, 0.69, 1),   # teal
-    (0.20, 0.78, 0.95, 1),   # cyan
-    (0.24, 0.55, 0.95, 1),   # blue
-    (0.43, 0.40, 0.95, 1),   # indigo
-    (0.66, 0.38, 0.88, 1),   # purple
-    (0.95, 0.40, 0.70, 1),   # pink
-    (0.85, 0.25, 0.55, 1),   # magenta
+    (0.91, 0.30, 0.24, 1),  # red
+    (0.95, 0.55, 0.15, 1),  # orange
+    (0.97, 0.80, 0.10, 1),  # yellow
+    (0.62, 0.85, 0.20, 1),  # lime
+    (0.18, 0.80, 0.44, 1),  # green
+    (0.10, 0.74, 0.69, 1),  # teal
+    (0.20, 0.78, 0.95, 1),  # cyan
+    (0.24, 0.55, 0.95, 1),  # blue
+    (0.43, 0.40, 0.95, 1),  # indigo
+    (0.66, 0.38, 0.88, 1),  # purple
+    (0.95, 0.40, 0.70, 1),  # pink
+    (0.85, 0.25, 0.55, 1),  # magenta
 ]
 ACCENT = (0.22, 0.74, 0.97, 1)
 
 TIPS = [
+    "Tip: Slide your finger to move the paddle.",
     "Tip: Catch the falling power-ups!",
     "Tip: Silver-framed bricks take 2 hits.",
     "Tip: Hit with the paddle edge to change the angle.",
@@ -51,21 +66,108 @@ TIPS = [
 
 # Each powerup has its own color (and a drawn picture, see _draw_pictogram).
 POWERUP_STYLE = {
-    'expand':    ([0.18, 0.80, 0.44, 1], 'W'),   # green  = wider paddle
-    'multiball': ([0.95, 0.60, 0.10, 1], 'M'),   # orange = extra ball
-    'sticky':    ([0.69, 0.35, 0.85, 1], 'S'),   # purple = sticky paddle
+    'expand':    ([0.18, 0.80, 0.44, 1], 'W'),  # green  = wider paddle
+    'multiball': ([0.95, 0.60, 0.10, 1], 'M'),  # orange = extra ball
+    'sticky':    ([0.69, 0.35, 0.85, 1], 'S'),  # purple = sticky paddle
 }
 
+POWERUP_SFX = {'expand': 'pu_expand', 'multiball': 'pu_multi', 'sticky': 'pu_sticky'}
+
 Window.clearcolor = (0.06, 0.09, 0.16, 1)
+
+
+class Audio:
+    """Loads the sounds carried by audio_data.py and plays them.
+    Every call is crash-proof: if anything goes wrong the game simply stays silent."""
+
+    def __init__(self, data_dir):
+        self.dir = data_dir
+        self.sfx = {}
+        self.music = None
+        self.sfx_on = True
+        self.music_on = True
+        self._queue = []
+        if data_dir and audio_data is not None and SoundLoader is not None:
+            self._queue = list(audio_data.SFX.keys()) + ['__music__']
+        self.ok = bool(self._queue)
+
+    @property
+    def ready(self):
+        return not self._queue
+
+    def load_next(self):
+        """Loads one sound per call, so the loading screen keeps animating smoothly."""
+        if not self._queue:
+            return
+        name = self._queue.pop(0)
+        try:
+            is_music = name == '__music__'
+            b64 = audio_data.MUSIC if is_music else audio_data.SFX[name]
+            wav = zlib.decompress(base64.b64decode(b64))
+            path = os.path.join(self.dir, ('music' if is_music else name) + '.wav')
+            if not os.path.exists(path) or os.path.getsize(path) != len(wav):
+                with open(path, 'wb') as f:
+                    f.write(wav)
+            snd = SoundLoader.load(path)
+            if snd is None:
+                return
+            if is_music:
+                snd.loop = True
+                self.music = snd
+            else:
+                self.sfx[name] = snd
+        except Exception:
+            pass
+
+    def play(self, name, vol=1.0):
+        if not self.sfx_on:
+            return
+        snd = self.sfx.get(name)
+        if snd is None:
+            return
+        try:
+            snd.volume = vol
+            if snd.state == 'play':
+                snd.stop()
+            snd.play()
+        except Exception:
+            pass
+
+    def set_music(self, on):
+        self.music_on = on
+        if not on:
+            self.music_stop()
+
+    def music_play(self, vol):
+        if not self.music_on or self.music is None:
+            return
+        try:
+            self.music.volume = vol
+            if self.music.state != 'play':
+                self.music.play()
+        except Exception:
+            pass
+
+    def music_stop(self):
+        if self.music is None:
+            return
+        try:
+            self.music.stop()
+        except Exception:
+            pass
 
 
 class BrickBreakerGame(Widget):
     score = NumericProperty(0)
     lives = NumericProperty(3)
-    state = StringProperty("loading")   # loading, start, playing, paused, powerups, won, lost
+    state = StringProperty("loading")  # loading, start, playing, paused, powerups, won, lost
 
     def __init__(self, **kwargs):
+        data_dir = kwargs.pop('data_dir', None)
         super(BrickBreakerGame, self).__init__(**kwargs)
+        self.audio = Audio(data_dir)
+        self._drag_uid = None
+        self._last_wall_sfx = -1.0
         self.gw = GAME_W
         self.gh = 1000.0
         self.s = 1.0
@@ -108,11 +210,35 @@ class BrickBreakerGame(Widget):
 
     def _setup_loading(self):
         self.load_t = 0.0
+        self._load_end = None
         n = LOAD_ROWS * LOAD_COLS
         self._tip = random.choice(TIPS)
         self._load_order = list(range(n))
         random.shuffle(self._load_order)
         self._load_colors = [random.choice(BRICK_PALETTE) for _ in range(n)]
+
+    def on_state(self, instance, value):
+        if getattr(self, 'audio', None) is None:
+            return
+        if value != "playing":
+            self._drag_uid = None
+        if value == "won":
+            self.audio.play('win')
+        elif value == "lost":
+            self.audio.play('over')
+        self._sync_music()
+
+    def _sync_music(self):
+        a = self.audio
+        st = self.state
+        if st == "start":
+            a.music_play(0.35)
+        elif st == "playing":
+            a.music_play(0.5)
+        elif st in ("paused", "powerups"):
+            a.music_play(0.18)          # quieter while a menu is open
+        elif st in ("won", "lost"):
+            a.music_stop()
 
     # ---------- keyboard (desktop only) ----------
     def _keyboard_closed(self):
@@ -193,16 +319,16 @@ class BrickBreakerGame(Widget):
         self.draw_everything()
 
     # ---------- touch ----------
-    def _move_paddle_to(self, touch):
-        tx = (touch.x - self.x) / self.s
-        self.paddle_x = max(0, min(tx - self.paddle_w / 2, self.gw - self.paddle_w))
-
     def _launch_balls(self):
+        launched = False
         for ball in self.balls:
             if ball['caught']:
                 ball['caught'] = False
                 ball['dx'] = BALL_SPEED * random.choice([-1, 1])
                 ball['dy'] = BALL_SPEED
+                launched = True
+        if launched:
+            self.audio.play('launch')
 
     def _hit_button(self, touch):
         gx = (touch.x - self.x) / self.s
@@ -218,43 +344,74 @@ class BrickBreakerGame(Widget):
             return True
         if self.state == "start":
             touch.ud['menu'] = True
+            self.audio.play('click')
             self.state = "playing"
             self.reset_ball()
             return True
         if self.state in ("won", "lost"):
             touch.ud['menu'] = True
+            self.audio.play('click')
             self.restart()
             return True
         if self.state == "paused":
             touch.ud['menu'] = True
             hit = self._hit_button(touch)
-            if hit == 'resume':
-                self.state = "playing"
-            elif hit == 'powerups':
-                self.state = "powerups"
-            elif hit == 'restart':
-                self.restart()
+            if hit == 'sound':
+                self.audio.sfx_on = not self.audio.sfx_on
+                self.audio.play('click')
+            elif hit == 'music':
+                self.audio.set_music(not self.audio.music_on)
+                self._sync_music()
+                self.audio.play('click')
+            elif hit:
+                self.audio.play('click')
+                if hit == 'resume':
+                    self.state = "playing"
+                elif hit == 'powerups':
+                    self.state = "powerups"
+                elif hit == 'restart':
+                    self.restart()
             return True
         if self.state == "powerups":
             touch.ud['menu'] = True
             if self._hit_button(touch) == 'back':
+                self.audio.play('click')
                 self.state = "paused"
             return True
         if self.state == "playing":
             if self._hit_button(touch) == 'pause':
                 touch.ud['menu'] = True
+                self.audio.play('click')
                 self.state = "paused"
                 return True
-            self._launch_balls()
-            self._move_paddle_to(touch)
+            # Touching the screen does NOT move the paddle. It only starts a slide.
+            if self._drag_uid is None:
+                self._drag_uid = touch.uid
+                touch.ud['x0'] = touch.x
+                touch.ud['lx'] = touch.x
+                touch.ud['moved'] = False
             return True
 
     def on_touch_move(self, touch):
         if touch.ud.get('menu'):
             return True
-        if self.state == "playing":
-            self._move_paddle_to(touch)
+        if self.state == "playing" and touch.uid == self._drag_uid:
+            if abs(touch.x - touch.ud['x0']) > dp(10):
+                touch.ud['moved'] = True
+            # the paddle follows how far the finger SLIDES, not where it is
+            dx = (touch.x - touch.ud['lx']) / self.s * DRAG_SENS
+            touch.ud['lx'] = touch.x
+            self.paddle_x = max(0, min(self.paddle_x + dx, self.gw - self.paddle_w))
             return True
+
+    def on_touch_up(self, touch):
+        if touch.uid == self._drag_uid:
+            self._drag_uid = None
+            # a quick tap (no sliding) launches the ball
+            if not touch.ud.get('moved') and self.state == "playing":
+                self._launch_balls()
+            return True
+        return False
 
     # ---------- game flow ----------
     def spawn_ball(self, x, y, dx, dy, caught=False):
@@ -291,6 +448,7 @@ class BrickBreakerGame(Widget):
         self.reset_ball()
 
     def apply_powerup(self, p_type):
+        self.audio.play(POWERUP_SFX.get(p_type, 'click'))
         if p_type == "expand":
             self.paddle_w = min(180, self.paddle_w + 30)
             self.paddle_x = max(0, min(self.paddle_x, self.gw - self.paddle_w))
@@ -305,7 +463,10 @@ class BrickBreakerGame(Widget):
 
         if self.state == "loading":
             self.load_t += dt
-            if self.load_t >= LOAD_TIME:
+            self.audio.load_next()              # one sound per frame
+            if self._load_end is None and self.load_t >= LOAD_TIME and self.audio.ready:
+                self._load_end = self.load_t + 0.4      # start fading out
+            if self._load_end is not None and self.load_t >= self._load_end:
                 self.state = "start"
             self.draw_everything()
             return
@@ -344,17 +505,25 @@ class BrickBreakerGame(Widget):
             ball['y'] += ball['dy']
 
             # Walls (always push the ball away from the wall to avoid sticking)
+            bounced = False
             if ball['x'] - BALL_R <= 0:
+                bounced = bounced or ball['dx'] < 0
                 ball['dx'] = abs(ball['dx'])
             elif ball['x'] + BALL_R >= self.gw:
+                bounced = bounced or ball['dx'] > 0
                 ball['dx'] = -abs(ball['dx'])
             if ball['y'] + BALL_R >= self.gh:
+                bounced = bounced or ball['dy'] > 0
                 ball['dy'] = -abs(ball['dy'])
+            if bounced and self.t - self._last_wall_sfx > 0.06:
+                self._last_wall_sfx = self.t
+                self.audio.play('wall', 0.6)
 
             # Paddle (only when the ball is moving down)
             if (ball['dy'] < 0
                     and self.paddle_y <= ball['y'] - BALL_R <= self.paddle_y + PADDLE_H
                     and self.paddle_x <= ball['x'] <= self.paddle_x + self.paddle_w):
+                self.audio.play('paddle')
                 if self.is_sticky:
                     ball['caught'] = True
                     ball['dx'], ball['dy'] = 0, 0
@@ -375,6 +544,7 @@ class BrickBreakerGame(Widget):
                     if b['hp'] <= 0:
                         b['alive'] = False
                         self.score += b['pts']
+                        self.audio.play('brick%d' % (3 - min(3, b['r'] // 2)))   # higher rows = higher pitch
                         if random.random() < 0.25:
                             self.powerups.append({
                                 'x': b['x'] + b['w'] / 2, 'y': b['y'],
@@ -382,6 +552,7 @@ class BrickBreakerGame(Widget):
                             })
                     else:
                         b['cracked'] = True
+                        self.audio.play('tough')
                     ball['dy'] = -ball['dy']
                     break
 
@@ -395,6 +566,7 @@ class BrickBreakerGame(Widget):
             if self.lives <= 0:
                 self.state = "lost"
             else:
+                self.audio.play('life')
                 self.reset_ball()
 
         if all(not b['alive'] for b in self.bricks):
@@ -678,8 +850,8 @@ class BrickBreakerGame(Widget):
     def _draw_button(self, key, label, icon, cx, cy, w, h, color):
         x, y = cx - w / 2, cy - h / 2
         dark = (color[0] * 0.55, color[1] * 0.55, color[2] * 0.55, 1)
-        self._rrect(x, y - 7, w, h, 18, (0, 0, 0, 0.45))               # drop shadow
-        self._rrect(x, y - 4, w, h, 18, dark)                        # 3D edge
+        self._rrect(x, y - 7, w, h, 18, (0, 0, 0, 0.45))             # drop shadow
+        self._rrect(x, y - 4, w, h, 18, dark)                         # 3D edge
         self._rrect(x, y, w, h, 18, color)                            # face
         self._rrect(x + 6, y + h * 0.5, w - 12, h * 0.5 - 6, 12, (1, 1, 1, 0.15))  # gloss
         self._rborder(x, y, w, h, 18, (1, 1, 1, 0.35), 1.5)
@@ -687,18 +859,30 @@ class BrickBreakerGame(Widget):
         self._draw_text(label, cx + 20, cy, 25)
         self._buttons.append((key, x, y - 4, x + w, y + h))
 
+    def _draw_toggle(self, key, label, on, cx, cy, w, h):
+        x, y = cx - w / 2, cy - h / 2
+        col = (0.18, 0.62, 0.38, 1) if on else (0.34, 0.37, 0.45, 1)
+        dark = (col[0] * 0.55, col[1] * 0.55, col[2] * 0.55, 1)
+        self._rrect(x, y - 6, w, h, 14, (0, 0, 0, 0.45))
+        self._rrect(x, y - 3, w, h, 14, dark)
+        self._rrect(x, y, w, h, 14, col)
+        self._rrect(x + 5, y + h * 0.5, w - 10, h * 0.5 - 5, 9, (1, 1, 1, 0.13))
+        self._rborder(x, y, w, h, 14, (1, 1, 1, 0.3), 1.2)
+        self._draw_text("%s: %s" % (label, "ON" if on else "OFF"), cx, cy, 20)
+        self._buttons.append((key, x, y - 3, x + w, y + h))
+
     def _draw_pause_menu(self, cx, cy):
         pulse = 0.5 + 0.5 * math.sin(self.t * 3)
         self._draw_overlay(0.74)
 
-        pw, ph = 440, 450
-        x, y = cx - pw / 2, cy - 210
+        pw, ph = 440, 500
+        x, y = cx - pw / 2, cy - 262
 
         # soft pulsing glow around the panel
         for i in (3, 2, 1, 0):
             self._rrect(x - 5 - i * 6, y - 5 - i * 6, pw + 10 + i * 12, ph + 10 + i * 12,
                         30 + i * 5, (0.22, 0.74, 0.97, 0.035 + 0.02 * pulse))
-        self._rrect(x, y - 9, pw, ph, 28, (0, 0, 0, 0.5))            # shadow
+        self._rrect(x, y - 9, pw, ph, 28, (0, 0, 0, 0.5))           # shadow
         self._rrect(x, y, pw, ph, 28, (0.08, 0.12, 0.22, 0.98))      # panel
         self._rrect(x + 8, y + ph * 0.55, pw - 16, ph * 0.45 - 8, 22, (1, 1, 1, 0.04))
         self._rborder(x, y, pw, ph, 28, (0.22, 0.74, 0.97, 0.5 + 0.35 * pulse), 2.5)
@@ -719,6 +903,8 @@ class BrickBreakerGame(Widget):
         self._draw_button('resume', "Resume", 'play', cx, cy + 50, 360, 66, (0.18, 0.62, 0.38, 1))
         self._draw_button('powerups', "Power-ups?", 'sparkle', cx, cy - 40, 360, 66, (0.20, 0.45, 0.80, 1))
         self._draw_button('restart', "Restart", 'restart', cx, cy - 130, 360, 66, (0.72, 0.28, 0.28, 1))
+        self._draw_toggle('music', "Music", self.audio.music_on, cx - 92, cy - 215, 172, 54)
+        self._draw_toggle('sound', "Sound", self.audio.sfx_on, cx + 92, cy - 215, 172, 54)
 
     def _draw_powerups_page(self, cx, cy):
         pulse = 0.5 + 0.5 * math.sin(self.t * 3)
@@ -757,8 +943,12 @@ class BrickBreakerGame(Widget):
     # ---------- loading screen ----------
     def _draw_loading(self, cx, cy):
         p = min(1.0, self.load_t / LOAD_TIME)
-        e = p * p * (3 - 2 * p)                            # smooth progress
-        fade = max(0.0, min(1.0, (LOAD_TIME - self.load_t) / 0.4))  # fades out at the end
+        if self._load_end is None:
+            p = min(p, 0.97)                                      # wait at 97% until the sounds are loaded
+            fade = 1.0
+        else:
+            fade = max(0.0, min(1.0, (self._load_end - self.load_t) / 0.4))   # fades out at the end
+        e = p * p * (3 - 2 * p)                                   # smooth progress
 
         Color(0.06, 0.09, 0.16, fade)
         Rectangle(pos=self.pos, size=self.size)
@@ -779,7 +969,7 @@ class BrickBreakerGame(Widget):
                 t = max(0.0, min(1.0, (e * (n + 6) - self._load_order[i]) / 5.0))
                 if t <= 0:
                     continue
-                sc = 0.4 + 0.6 * t                             # pop-in
+                sc = 0.4 + 0.6 * t                                  # pop-in
                 col = self._load_colors[i]
                 w_, h_ = bw * sc, bh * sc
                 bx = x0 + c * (bw + gap) + bw / 2 - w_ / 2
@@ -860,6 +1050,7 @@ class BrickBreakerGame(Widget):
                 self._draw_text("BRICK BREAKER", cx, cy + 25, 40, (0.22, 0.74, 0.97, 0.25 + 0.2 * pulse))
                 self._draw_text("BRICK BREAKER", cx, cy + 25, 36, (0.85, 0.95, 1, 1))
                 self._draw_text("Tap to start", cx, cy - 25, 24, (1, 1, 1, 0.55 + 0.45 * pulse))
+                self._draw_text("Slide your finger to move the paddle", cx, cy - 75, 18, (0.7, 0.78, 0.88, 1))
             elif self.state == "paused":
                 self._draw_pause_menu(cx, cy)
             elif self.state == "powerups":
@@ -875,7 +1066,7 @@ class BrickBreakerGame(Widget):
                 self._draw_text("Score: %d" % self.score, cx, cy - 15, 22, (0.85, 0.9, 0.95, 1))
                 self._draw_text("Tap to play again", cx, cy - 55, 24, (1, 1, 1, 0.55 + 0.45 * pulse))
             elif self.state == "playing" and any(b['caught'] for b in self.balls):
-                self._draw_text("Tap to launch", cx, self.paddle_y + 120, 22,
+                self._draw_text("Slide to move, tap to launch", cx, self.paddle_y + 120, 22,
                                 (0.8, 0.85, 0.9, 0.55 + 0.45 * pulse))
 
             # Loading screen sits on top of everything and fades out into the start screen
@@ -885,17 +1076,26 @@ class BrickBreakerGame(Widget):
 
 class BrickBreakerApp(App):
     def build(self):
-        return BrickBreakerGame()
+        data_dir = self.user_data_dir
+        try:
+            os.makedirs(data_dir, exist_ok=True)
+        except Exception:
+            data_dir = None
+        return BrickBreakerGame(data_dir=data_dir)
 
     def on_pause(self):
-        # Auto-pause when the app goes to the background; returning True keeps it alive.
+        # Auto-pause (and silence the music) when the app goes to the background.
         game = self.root
-        if game is not None and game.state == "playing":
-            game.state = "paused"
+        if game is not None:
+            if game.state == "playing":
+                game.state = "paused"
+            game.audio.music_stop()
         return True
 
     def on_resume(self):
-        pass
+        game = self.root
+        if game is not None:
+            game._sync_music()
 
 
 if __name__ == '__main__':
