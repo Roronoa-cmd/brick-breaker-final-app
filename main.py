@@ -887,8 +887,8 @@ class BrickBreakerGame(Widget):
         pulse = 0.5 + 0.5 * math.sin(self.t * 3)
         self._draw_overlay(0.74)
 
-        pw, ph = 440, 500
-        x, y = cx - pw / 2, cy - 262
+        pw, ph = 440, 540
+        x, y = cx - pw / 2, cy - 285
 
         # soft pulsing glow around the panel
         for i in (3, 2, 1, 0):
@@ -902,26 +902,26 @@ class BrickBreakerGame(Widget):
         # row of mini bricks as decoration
         sx0 = cx - (5 * 40 + 4 * 6) / 2
         for i, col in enumerate(self._strip_colors):
-            self._rrect(sx0 + i * 46, cy + 205, 40, 16, 4, col)
-            self._rrect(sx0 + i * 46 + 3, cy + 212, 34, 5, 2, (1, 1, 1, 0.25))
+            self._rrect(sx0 + i * 46, cy + 230, 40, 16, 4, col)
+            self._rrect(sx0 + i * 46 + 3, cy + 237, 34, 5, 2, (1, 1, 1, 0.25))
 
         # title with glow
-        self._draw_text("PAUSED", cx, cy + 160, 48, (0.22, 0.74, 0.97, 0.22 + 0.2 * pulse))
-        self._draw_text("PAUSED", cx, cy + 160, 42, (0.85, 0.95, 1, 1))
-        self._draw_text("Score %d     Lives %d" % (self.score, self.lives), cx, cy + 118, 20,
+        self._draw_text("PAUSED", cx, cy + 190, 48, (0.22, 0.74, 0.97, 0.22 + 0.2 * pulse))
+        self._draw_text("PAUSED", cx, cy + 190, 42, (0.85, 0.95, 1, 1))
+        self._draw_text("Score %d     Lives %d" % (self.score, self.lives), cx, cy + 148, 20,
                         (0.6, 0.68, 0.78, 1))
 
-        # buttons
-        self._draw_button('resume', "Resume", 'play', cx, cy + 50, 360, 66, (0.18, 0.62, 0.38, 1))
-        self._draw_button('powerups', "Power-ups?", 'sparkle', cx, cy - 40, 360, 66, (0.20, 0.45, 0.80, 1))
-        self._draw_button('restart', "Restart", 'restart', cx, cy - 130, 360, 66, (0.72, 0.28, 0.28, 1))
-        # OLD MODE button — toggles OLED pure-black background
-        old_col = (0.10, 0.10, 0.10, 1) if not self.oled_mode else (0.05, 0.05, 0.05, 1)
-        old_label = "Old Mode: ON" if self.oled_mode else "Old Mode: OFF"
-        self._draw_button('old_mode', old_label, 'back', cx, cy - 215, 360, 54, old_col)
-        # border highlight when active
-        if self.oled_mode:
-            self._rborder(cx - 180, cy - 215 - 27, 360, 54, 18, (1, 1, 1, 0.55), 2)
+        # main buttons
+        self._draw_button('resume', "Resume", 'play', cx, cy + 85, 360, 62, (0.18, 0.62, 0.38, 1))
+        self._draw_button('powerups', "Power-ups?", 'sparkle', cx, cy + 10, 360, 62, (0.20, 0.45, 0.80, 1))
+        self._draw_button('restart', "Restart", 'restart', cx, cy - 65, 360, 62, (0.72, 0.28, 0.28, 1))
+
+        # Sound + Music toggles side by side
+        self._draw_toggle('sound', "Sound", self.audio.sfx_on, cx - 94, cy - 140, 172, 50)
+        self._draw_toggle('music', "Music", self.audio.music_on, cx + 94, cy - 140, 172, 50)
+
+        # Old Mode toggle (pure black background)
+        self._draw_toggle('old_mode', "Old Mode", self.oled_mode, cx, cy - 210, 360, 50)
 
     def _draw_powerups_page(self, cx, cy):
         pulse = 0.5 + 0.5 * math.sin(self.t * 3)
