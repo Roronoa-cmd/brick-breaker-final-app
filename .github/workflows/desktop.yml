@@ -1,0 +1,60 @@
+name: Build Desktop (Windows + Linux)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: windows
+          - os: ubuntu-22.04
+            name: linux
+
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Linux libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1 libmtdev1 xvfb
+
+      - name: Install Python packages
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "kivy[base]" pyinstaller pillow
+
+      - name: Build app
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a python build_desktop.py 2>&1 | tee build.log
+          else
+            python build_desktop.py 2>&1 | tee build.log
+          fi
+
+      - name: Show end of log on failure
+        if: failure()
+        shell: bash
+        run: tail -n 80 build.log
+
+      - name: Upload app
+        uses: actions/upload-artifact@v4
+        with:
+          name: BrickBreaker-${{ matrix.name }}
+          path: out/*
